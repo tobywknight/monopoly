@@ -1,16 +1,18 @@
 import random
+import sys
+maxTurns = 1000
 startingCash = 1500
 minCashLimit = 25
-maxTurns = 1000
-highRiskBudgetCalc = 0.99
-lowRiskBudgetCalc = 0.5
-debugMode = True
+highRiskBudgetCalc = 1
+lowRiskBudgetCalc = 0.6
+debugMode = False
 dealsMade = 0
 myWins = 0
 maxGames = 3
 
 # BACKLOG
-# Add logic to handle rolled doubles + repeat player move.
+# IMPLEMENT player make deal and accept deal config in deal functions!!
+
 # Add player behaviour config - willingness to trade!
 # Add player behaviour config - buy stations or not?
 
@@ -67,7 +69,7 @@ class Board:
 
 # define player class:
 class Player:
-    def __init__(self, name, piece, invRisk, buyUtility):
+    def __init__(self, name, piece, invRisk, buyUtility, offerDeals, acceptDeals):
         self.name = name
         self.piece = piece
         self.position = 0
@@ -80,20 +82,24 @@ class Player:
         self.inJail = False
         self.jailTurns = 0
         self.hasJailCards = 0
-        self.invRisk = invRisk #houseInvRisk can be high or low.  How much of cash with player invest in houses
+        self.invRisk = invRisk 
+        # NEW invRisk is a number between 0 and 1.  It determines the share of players cash to invest in property, houses or hotels
+        # OLD houseInvRisk can be high or low.  How much of cash with player invest in houses
         #self.houseInvRisk = "low"
         self.houseInvSpread = "pile" #houseInvSpread is spread or pile.  This decides whether to concentrate house building in a single set or spread across multiple sets
         #self.houseInvSpread = "pile"
         self.houseInvTier = "cheap" #houseInvTier is cheap or expensive.  This decides whether player prefers to first develop cheaper sets (e.g. Old Kent Road) or expensive sets (e.g. Mayfair)
         #self.houseInvTier = "expensive"
         self.buyUtility = buyUtility
+        self.offerDeals = offerDeals
+        self.acceptDeals = acceptDeals
 
     def __str__(self):
         strSelf = ""
         strPropPortfolio = "PROPERTIES OWNED:\n"
         for p in self.properties:
-            strPropPortfolio = strPropPortfolio + str(p) + "\n"
-        return f"Player name = {self.name}\n Player piece = {self.piece}\n Player pos = {self.position}\n Player.cash =  {self.cash}\n Player.isBankrupt = {self.isBankrupt}\n" + strPropPortfolio + "\n"
+            strPropPortfolio = strPropPortfolio + str(p.name) + " isMortgaged = " + str(p.mortgaged) + " numHouses = " + str(p.numHouses) + "\n"
+        return f"Player name = {self.name}\n Player piece = {self.piece}\n Player pos = {self.position}\n Player.cash =  {self.cash}\n Player.isBankrupt = {self.isBankrupt}\n buyUtility = {self.buyUtility}\n" + strPropPortfolio + "\n"
 
 # function to roll two 6 sided dice and return the result:
 def roll_dice():
@@ -104,11 +110,6 @@ def roll_dice():
     if die1 == die2:
         roll_double = True
     return [(die1+die2), roll_double]
-
-# function to move player around the board:
-def move_player(player, num_spaces):
-    global debugMode
-    player.position = (player.position + num_spaces) % 40
 
 # function to buy a property (from the bank):
 def buy_property(player, property):
@@ -378,7 +379,7 @@ def declare_bankruptcy(player):
 
 
 # function to process chance or community chest card outcomes
-def process_card(player, board, card):
+def process_card(board, players, player, card):
     global debugMode
     c = card
     if c[0] == "advanceto":
@@ -390,23 +391,23 @@ def process_card(player, board, card):
             mv = (newPos+40) - pos
         else:
             mv = newPos - pos
-        move_player(player,mv)
+        move_player(board, players, player, [mv,False])
     elif c[0] == "gotojail":
         go_to_jail(player)
     elif c[0] == "goback":
         if c[2] < 0:
             # card is go back 3 spaces:
-            move_player(player,-3)
+            move_player(board, players, player,[-3,False])
         else:
             #card says go back to a square
             pos = player.position
             newPos = c[2]
             mv = newPos - pos
             if mv < 1:
-                move_player(player, mv)
+                move_player(board, players, player, [mv,False])
             else:
                 mv = (pos+40) - newPos
-                move_player(player, mv)
+                move_player(board, players, player, [mv,False])
     elif c[0] == "pay" or c[0] == "receive":
         player.cash += c[2]
     elif c[0] == "jailfreecard":
@@ -427,19 +428,19 @@ def process_card(player, board, card):
     return
 
 # function to handle a player drawing a chance card:
-def draw_chance_card(player, board):
+def draw_chance_card(board, players, player):
     global debugMode
     card = random.choice(chance_cards)
     if debugMode: print(f"Chance! {player.name} has drawn {card[1]}")
-    process_card(player, board, card)
+    process_card(board, players, player, card)
     return
             
 # function to handle a player drawing a community chest card:
-def draw_community_chest_card(player, board):
+def draw_community_chest_card(board, players, player):
     global debugMode
     card = random.choice(community_chest_cards)
     if debugMode: print(f"Community Chest! {player.name} has drawn {card[1]}")
-    process_card(player, board, card)
+    process_card(board, players, player, card)
     return
 
 # function to find owner of a given property
@@ -569,68 +570,20 @@ def develop_properties(board, player, budget):
     return True
 
 # calculate a players budget based on their risk profile
-def calc_budget(player):
+def calc_budget(board, player):
     global debugMode
-    budget = player.cash - minCashLimit
-    if player.invRisk == "high":
-        budget = player.cash * highRiskBudgetCalc
-    else:
-        budget = player.cash * lowRiskBudgetCalc
-    return budget
+    return max(0,int((player.cash - minCashLimit) - (int(estimate_max_rent(board) * player.invRisk))))
 
 # function to move a player around the board:
-def move_player(player, num_spaces):
+def move_player(board, players, player, diceRoll):
     global debugMode
     oldPos = player.position
+    num_spaces = diceRoll[0]
     player.position = (player.position + num_spaces) % 40
     if debugMode: print(f"DEBUG: move_player {player.name} moved from position {oldPos} ")
     if (player.position < oldPos) and (num_spaces > 0):
         pass_go(player)
     
-
-
-# function to handle a player's turn:
-def take_turn(player, players, board):
-    doublesRolled = 0
-    global debugMode
-    
-    # start of turn - print player status
-    if debugMode: print(f"take_turn: Start of turn {player.name}:")
-    # if player is bankrupt - they don't play a turn
-    if player.isBankrupt == True:
-        if debugMode: print(f"take_turn: {player.name} is bankrupt - exit function")
-        return
-    if debugMode: print(player.name + " is on position " + str(player.position))
-
-    # roll dice:
-    diceRoll = roll_dice()
-    if debugMode: print(player.name + " rolled a " + str(diceRoll[0]))
-
-    if player.inJail == True:
-        player.jailTurns += 1
-        # check to see if player rolled double:
-        if diceRoll[1] == True:
-            # Player has rolled double, so can leave jail:
-            move_player(player, diceRoll[0])
-            if debugMode: print(player.name + " rolled double. Left Jailed. Moved to position " + str(player.position))
-        else:
-            # Player has not rolled double:
-            # check if player has get out of jail free card:
-            if player.hasJailCards > 0:
-                player.hasJailCards -= 1
-                move_player(player, diceRoll[0])
-                if debugMode: print(player.name + " played Get Out of Jail Free Card. Left Jail. Moved to position " + str(player.position))
-            else:
-                if player.jailTurns > 2:
-                    player.cash -= 50
-                    move_player(player, diceRoll[0])
-                    if debugMode: print(player.name + " 3rd turn in Jail. Paid 50. Left Jail. Moved to position " + str(player.position))
-    else:
-        # Player is not in jail, so move player around the board:
-        move_player(player, diceRoll[0])
-        # newPos = player.position
-        if debugMode: print(player.name + " has moved to position " + str(player.position))
-
     # retrieve the square the player has landed on:
     sq = board.squares[player.position]
     if debugMode: print("square name = ", sq.name)
@@ -650,15 +603,16 @@ def take_turn(player, players, board):
         elif p2 == False:
             # No one owns the property, maybe buy it?
             # TO DO - Add some player buying decision logic here?
-            if calc_budget(player) > p.price:
+            if calc_budget(board, player) > p.price:
                 if p.type == "utility":
                     if player.buyUtility == True:
                         buy_property(player,p)
                 else:
                     buy_property(player,p)
         else:
+            # The property is owned by another player
             if p.mortgaged == False:
-                # pay rent
+                # the property is not mortaged, so pay rent
                 pay_rent(board,player,p2,p,diceRoll)
 
     elif sq.type == "go":
@@ -666,10 +620,10 @@ def take_turn(player, players, board):
     elif sq.type == "freepark":
         pass
     elif sq.type == "chance":
-        draw_chance_card(player, board)
+        draw_chance_card(board, players, player)
     elif sq.type == "commchest":
         # TO DO - Need to action community chest card
-        draw_community_chest_card(player, board)
+        draw_community_chest_card(board, players, player)
     elif sq.type == "jail":
         pass
     elif sq.type == "gotojail":
@@ -689,13 +643,73 @@ def take_turn(player, players, board):
         if debugMode: print(player.name + " is bankrupt!")
         player.isBankrupt = True
         return
+    return
+    
+# function to handle a player's turn:
+def take_turn(player, players, board):
+    doublesRolled = 0
+    global debugMode
+    
+    # start of turn - print player status
+    if debugMode: print(f"take_turn: Start of turn {player.name}:")
+    # if player is bankrupt - they don't play a turn
+    if player.isBankrupt == True:
+        if debugMode: print(f"take_turn: {player.name} is bankrupt - exit function")
+        return
+    if debugMode: print(player.name + " is on position " + str(player.position))
+        
+    # roll dice:
+    diceRoll = roll_dice()
+    if debugMode: print(player.name + " rolled a " + str(diceRoll[0]))
+
+    if player.inJail == True:
+        player.jailTurns += 1
+        # check to see if player rolled double:
+        if diceRoll[1] == True:
+            # Player has rolled double, so can leave jail:
+            move_player(board, players, player, diceRoll)
+            player.inJail == False
+            if debugMode: print(player.name + " rolled double. Left Jailed. Moved to position " + str(player.position))
+        else:
+            # Player has not rolled double:
+            # check if player has get out of jail free card:
+            if player.hasJailCards > 0:
+                player.hasJailCards -= 1
+                player.inJail == False
+                move_player(board, players, player, diceRoll)
+                if debugMode: print(player.name + " played Get Out of Jail Free Card. Left Jail. Moved to position " + str(player.position))
+            else:
+                if player.jailTurns > 2:
+                    player.cash -= 50
+                    player.inJail == False
+                    move_player(board, players, player, diceRoll)
+                    if debugMode: print(player.name + " 3rd turn in Jail. Paid 50. Left Jail. Moved to position " + str(player.position))
+    else:
+        # Player is not in jail, so move player around the board:
+        # Loop to handle roll dice and roll doubles
+        for i in range (0,3):
+            # Roll the dice:
+            diceRoll = roll_dice()
+            # Move the player
+            move_player(board, players, player, diceRoll)
+            # If its not a double, don't roll again (so exit this loop)
+            if diceRoll[1] == False:
+                break
+            # It is a double.
+            else:
+                if debugMode: print(f"DEBUG: take_turn, player {player.name} rolled str({i+1}th double)")
+                # It is a double, so if its the 3rd, go to jail.
+                if i == 2:
+                    if debugMode: print(f"DEBUG: take_turn, player {player.name} too many doubles, Go To Jail.")
+                    go_to_jail(player)
+                    break
 
     # Check to see if we can unmortgage properties:
-    budget = calc_budget(player)
+    budget = calc_budget(board, player)
     unmortgage_properties(player,budget)
 
     # if player can invest in development, do that here:
-    budget = calc_budget(player)
+    budget = calc_budget(board, player)
     if len([p for p in player.properties]) > 0: 
         # List properties that could be developed:
         propsToDev = False
@@ -707,7 +721,7 @@ def take_turn(player, players, board):
             develop_properties(board, player, budget)
 
     # Now look for trades
-    budget = calc_budget(player)
+    budget = calc_budget(board, player)
     if budget > 300 and (len([p for p in player.properties]) > 0):
         do_trading(board,players,player)
 
@@ -839,7 +853,7 @@ def do_trading(board, players, player):
             if p2 == False:
                 # This means missing property is owned by the bank!
                 continue
-            budget = calc_budget(player)
+            budget = calc_budget(board, player)
             cashOffer = ((targetProp.price * 1.2) + 50)
             if budget > cashOffer:
                 complete_propCash_trade(board,player,p2,targetProp,cashOffer)
@@ -899,10 +913,35 @@ def consider_trade_offer(board, offeringPlayer, targetPlayer, offeredProp, wante
     if (setSize - propsInSet == 1) or (propsInSet > 0):
         costDiff = wantedProp.price - offeredProp.price
         cash = costDiff
-        if calc_budget(offeringPlayer) > cash:
+        if calc_budget(board, offeringPlayer) > cash:
             complete_property_trade(board, offeringPlayer, targetPlayer,offeredProp, wantedProp, cash)
             return True
     return False
+
+def estimate_max_rent(board):
+    maxRent = 0
+    rent = 0
+    for property in board.properties:
+        if property.type == "street":
+        # base case where no houses are built:
+            if property.numHouses == 0:
+                # For estimate purpose, assume owns_whole_set = True
+                rent = (property.rent0 * 2)
+            elif property.numHouses == 1:
+                rent = property.rent1
+            elif property.numHouses == 2:
+                rent = property.rent2
+            elif property.numHouses == 3:
+                rent = property.rent3
+            elif property.numHouses == 4:
+                rent = property.rent4
+            else:
+                rent = property.rent5
+        else:
+            # assume base case of X for stations.
+            rent = 100
+        maxRent = max(maxRent, rent)
+    return maxRent
 
 def create_board(propData, sqs):
     global debugMode
@@ -916,7 +955,7 @@ def create_players(playerData):
     return players
 
 # function to find the winner:
-def find_winner(players, turns):
+def find_winner(players, turns, gameInputs):
     global debugMode
     global dealsMade
     global myWins
@@ -942,45 +981,43 @@ def find_winner(players, turns):
                     print(f"turns completed = {turns}")
                     print(f"deals made = {dealsMade}")
                     print(f"Winner cash = {winner.cash}")
-        print(f"RESULT: {winner.name} is the winner!")
-        return winner
+        # print(f"WINNER = {winner.name}, pName = {gameInputs[0]}, pInvRisk = {gameInputs[1]}, pBuyUtility = {gameInputs[2]}")            
+        print(f"{winner.name},{gameInputs[0]},{gameInputs[1]},{gameInputs[2]}")
+        exit()
     else:
         return None
 
 # function to play the game:
-def play_game(board, players):
+def play_game(board, players, gameInputs):
     global debugMode
     global dealsMade
-    turns = 0
+    global maxTurns
     if debugMode: print("Welcome to Monopoly!")
-    while find_winner(players, turns) == None:
-        for p in players:
-            if p.isBankrupt == False:
-                take_turn(p, players, board)
-                if debugMode: print("turn number " + str(turns) + " out of " + str(maxTurns) + " turns")
-                turns += 1
-                if turns > maxTurns:
-                    print(f"NO RESULT: Turns = {maxTurns} with no winner.")
-                    if debugMode: print(f"deals made = {dealsMade}")
-                    if debugMode:
-                        for p in players:
-                            print("===============")
-                            print(f"player {p.name}")
-                            print (f"cash {p.cash}")
-                            print("Properties:")
-                            for props in p.properties:
-                                print(f"{props.name}")
-                                print(f"Houses built = {props.numHouses}")
-                            print("===============")
-                    exit()
+    for i in range(1,(maxTurns+1)):
+    # while find_winner(players, turns) == None:
+        if find_winner(players,i, gameInputs) == None:
+            # We have not found a winner, so start a turn for each player:
+            for p in players:
+                # Exclude bankrupt player:
+                if p.isBankrupt == False:
+                    take_turn(p, players, board)
+                    if debugMode: print("turn number " + str(i) + " out of " + str(maxTurns) + " turns")
 
-# Create some players        
-myPlayers = [
-    Player("2Pac", "TopHat", "high", True),
-    Player("Nas", "Boot", "high", True),
-    Player("Bob","Car", "high", True),
-    Player("Jane", "T-Rex", "high", True)
-]
+    # The N-Turns loop has completed and not found a winner, so print output.
+    print(f"NO RESULT: Turns = {maxTurns} with no winner.")
+    if debugMode: print(f"deals made = {dealsMade}")
+    if debugMode:
+        for p in players:
+            print("===============")
+            print(f"player {p.name}")
+            print (f"cash {p.cash}")
+            print("Properties:")
+            for prop in p.properties:
+                print(f"{prop.name}")
+                print(f"Mortgaged = {prop.mortgaged}")
+                print(f"Houses built = {prop.numHouses}")
+            print("===============")
+    exit()
 
 # Create property data
 propData = [
@@ -1124,10 +1161,51 @@ community_chest_cards = [
     ["advanceto","Advance to nearest Station", 5,15,25,35]
 ]
 
-# for i in range(0, maxGames):
+# Create some players        
 
+if len(sys.argv) > 1:
+    pName = sys.argv[1]
+    pInvRisk = float((int(sys.argv[2]))/100)
+    pBuyUtility = sys.argv[3]
+    myInputs = [pName,pInvRisk,pBuyUtility]
+    p1 = Player(pName, "T-Rex", pInvRisk, pBuyUtility, True, True)
+else:
+    p1 = Player("Bob", "T-Rex", highRiskBudgetCalc, "False", True, True) 
+
+myPlayers = [
+    p1,
+    Player("Nas", "Boot", highRiskBudgetCalc, True, True, True),
+    Player("2Pac","Car", highRiskBudgetCalc, True, True, True),
+    Player("Jane", "TopHat", highRiskBudgetCalc, True, True, True),
+]
+# print(p1)
 pls = create_players(myPlayers)
 b = create_board(propData, squares)
-play_game(b, pls)
+play_game(b, pls, myInputs)
+
+# x = calc_budget(b,pls[0])
+# print(f"calc_budget for player 0 = {x}")
+""" 
+buy_property(pls[0],b.properties[3])
+buy_property(pls[0],b.properties[4])
+buy_property(pls[0],b.properties[5])
+build_house(pls[0],b.properties[3])
+build_house(pls[0],b.properties[4])
+build_house(pls[0],b.properties[5])
+build_house(pls[0],b.properties[3])
+build_house(pls[0],b.properties[4])
+build_house(pls[0],b.properties[5])
+build_house(pls[0],b.properties[3])
+build_house(pls[0],b.properties[4])
+build_house(pls[0],b.properties[5])
+build_house(pls[0],b.properties[3])
+build_house(pls[0],b.properties[4])
+build_house(pls[0],b.properties[5])
+build_house(pls[0],b.properties[3])
+build_house(pls[0],b.properties[4])
+build_house(pls[0],b.properties[5])
+
+r = estimate_max_rent(b)
+print(f"max rent = {r}") """
 
 # print(f"Test Player {pls[0].name} won {myWins} times.")
