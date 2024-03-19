@@ -5,14 +5,12 @@ startingCash = 1500
 minCashLimit = 25
 highRiskBudgetCalc = 1
 lowRiskBudgetCalc = 0.6
-debugMode = False
+debugMode = True
 dealsMade = 0
 myWins = 0
 maxGames = 3
 
 # BACKLOG
-# IMPLEMENT player make deal and accept deal config in deal functions!!
-
 # Add player behaviour config - willingness to trade!
 # Add player behaviour config - buy stations or not?
 
@@ -376,7 +374,6 @@ def declare_bankruptcy(player):
     global debugMode
     player.isBankrupt = True
     player.properties.clear()
-
 
 # function to process chance or community chest card outcomes
 def process_card(board, players, player, card):
@@ -1160,9 +1157,7 @@ community_chest_cards = [
     ["advanceto","Advance to nearest Utility", 12,28],
     ["advanceto","Advance to nearest Station", 5,15,25,35]
 ]
-
-# Create some players        
-
+        
 if len(sys.argv) > 1:
     pName = sys.argv[1]
     pInvRisk = float((int(sys.argv[2]))/100)
@@ -1172,40 +1167,14 @@ if len(sys.argv) > 1:
 else:
     p1 = Player("Bob", "T-Rex", highRiskBudgetCalc, "False", True, True) 
 
+# Create some players
 myPlayers = [
     p1,
     Player("Nas", "Boot", highRiskBudgetCalc, True, True, True),
     Player("2Pac","Car", highRiskBudgetCalc, True, True, True),
     Player("Jane", "TopHat", highRiskBudgetCalc, True, True, True),
 ]
-# print(p1)
+
 pls = create_players(myPlayers)
 b = create_board(propData, squares)
 play_game(b, pls, myInputs)
-
-# x = calc_budget(b,pls[0])
-# print(f"calc_budget for player 0 = {x}")
-""" 
-buy_property(pls[0],b.properties[3])
-buy_property(pls[0],b.properties[4])
-buy_property(pls[0],b.properties[5])
-build_house(pls[0],b.properties[3])
-build_house(pls[0],b.properties[4])
-build_house(pls[0],b.properties[5])
-build_house(pls[0],b.properties[3])
-build_house(pls[0],b.properties[4])
-build_house(pls[0],b.properties[5])
-build_house(pls[0],b.properties[3])
-build_house(pls[0],b.properties[4])
-build_house(pls[0],b.properties[5])
-build_house(pls[0],b.properties[3])
-build_house(pls[0],b.properties[4])
-build_house(pls[0],b.properties[5])
-build_house(pls[0],b.properties[3])
-build_house(pls[0],b.properties[4])
-build_house(pls[0],b.properties[5])
-
-r = estimate_max_rent(b)
-print(f"max rent = {r}") """
-
-# print(f"Test Player {pls[0].name} won {myWins} times.")
